@@ -210,7 +210,7 @@ class ASRParser(FairdiParser):
         import json
         with open(mainfile, 'rt') as f:
             archive_data = json.load(f)
-            archive.m_from_dict(archive_data)
+            archive.m_update_from_dict(archive_data)
 
 
 def asr_to_archives(directory: str, recipes: List[str] = None):
