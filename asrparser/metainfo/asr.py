@@ -197,7 +197,7 @@ class x_asr_dependencies(MSection):
         validate=False)
 
     x_asr_dependency = SubSection(
-        sub_section=SectionProxy('x_asr_run_dependency'),
+        sub_section=SectionProxy('x_asr_dependency'),
         repeats=True)
 
 

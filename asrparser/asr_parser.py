@@ -28,15 +28,13 @@ from asr.core.record import Record
 
 from nomad.units import ureg
 from nomad.parsing.parser import ArchiveParser
-from nomad.cli.client import upload as nomad_upload
 from nomad.datamodel import EntryArchive
 from nomad.datamodel.metainfo.simulation.run import Run, Program, TimeRun
 from nomad.datamodel.metainfo.simulation.system import System, Atoms
 from nomad.datamodel.metainfo.simulation.calculation import (
     Calculation, BandStructure, BandEnergies, Energy, EnergyEntry, Forces, ForcesEntry,
     Stress, StressEntry)
-from nomad.datamodel.metainfo.workflow import (
-    Workflow, Phonon)
+from nomad.datamodel.metainfo.workflow import Workflow
 from asrparser.metainfo.asr import (
     x_asr_resources, x_asr_metadata,
     x_asr_run_specification, x_asr_parameters, x_asr_code, x_asr_codes, x_asr_dependencies,
@@ -67,10 +65,10 @@ class ASRRecord:
         self._converted = False
 
     def _parse_system(self, atoms):
-        system = self.archive.run[-1].m_create(System)
+        system = self._archive.run[-1].m_create(System)
         system.atoms = Atoms(
             positions=atoms.get_positions() * ureg.angstrom,
-            latttice_vectors=atoms.get_cell().array * ureg.angstrom,
+            lattice_vectors=atoms.get_cell().array * ureg.angstrom,
             periodic=[True, True, True],
             labels=atoms.get_chemical_symbols())
 
@@ -78,12 +76,12 @@ class ASRRecord:
         result = self.record.result
         for image in result.images:
             self._parse_system(image)
-        workflow = self.archive.m_create(Workflow)
+        workflow = self._archive.m_create(Workflow)
         workflow.type = 'geometry_optimization'
-        workflow.run_ref = self.archive.run[-1]
+        workflow.run_ref = self._archive.run[-1]
 
-        calc = self.archive.run[-1].m_create(Calculation)
-        calc.system_ref = self.archive.run[-1].system[-1]
+        calc = self._archive.run[-1].m_create(Calculation)
+        calc.system_ref = self._archive.run[-1].system[-1]
         calc.energy = Energy(total=EnergyEntry(value=result.etot * ureg.eV))
         calc.forces = Forces(total=ForcesEntry(value=result.forces * ureg.eV / ureg.angstrom))
         stress = np.zeros((3, 3))
@@ -96,9 +94,9 @@ class ASRRecord:
         calc.stress = Stress(total=StressEntry(value=stress))
 
     def _parse_c2db_phonopy(self):
-        workflow = self.archive.m_create(Phonon)
+        workflow = self._archive.m_create(Workflow)
         workflow.type = 'phonon'
-        workflow.run_ref = self.archive.run[-1]
+        workflow.run_ref = self._archive.run[-1]
 
         bands = self.record.result.data.get('omega_kl')
 
@@ -106,8 +104,8 @@ class ASRRecord:
         hisym_kpts = [list(p) for p in path.special_points.values()]
         labels = list(path.special_points.keys())
         endpoints = []
-        calc = self.archive.run[-1].m_create(Calculation)
-        bandstructure = calc.m_create(BandStructure)
+        calc = self._archive.run[-1].m_create(Calculation)
+        bandstructure = calc.m_create(BandStructure, Calculation.band_structure_phonon)
         for i, qpoint in enumerate(path.kpts):
             if list(qpoint) in hisym_kpts:
                 endpoints.append(i)
@@ -138,13 +136,15 @@ class ASRRecord:
         if self.record.metadata is not None:
             metadata = run.m_create(x_asr_metadata)
             metadata.x_asr_created = (
-                self.record.metadata.created - datetime.datetime(1970, 0, 0)).total_seconds()
+                self.record.metadata.created - datetime.datetime(1970, 1, 1)).total_seconds()
             metadata.x_asr_modified = (
-                self.record.metadata.modified - datetime.datetime(1970, 0, 0)).total_seconds()
+                self.record.metadata.modified - datetime.datetime(1970, 1, 1)).total_seconds()
             metadata.x_asr_directory = self.record.metadata.directory
 
         # misc
         for key, val in self.record.__dict__.items():
+            if hasattr(val, '__dict__'):
+                continue
             try:
                 setattr(run, 'x_asr_%s' % key, val)
             except Exception:
@@ -154,30 +154,35 @@ class ASRRecord:
             # parse original system info
             atoms = self.record.run_specification.parameters.atoms
             self._parse_system(atoms)
-
             run_spec = run.m_create(x_asr_run_specification)
             for key, val in self.record.run_specification.__dict__.items():
+                if hasattr(val, '__dict__'):
+                    continue
                 try:
                     setattr(run_spec, 'x_asr_%s' % key, val)
                 except Exception:
                     pass
             parameters = run_spec.m_create(x_asr_parameters)
             for key, val in self.record.run_specification.parameters.__dict__.items():
+                if hasattr(val, '__dict__'):
+                    continue
                 try:
                     setattr(parameters, 'x_asr_%s' % key, val)
                 except Exception:
                     pass
             codes = run_spec.m_create(x_asr_codes)
             for entry in self.record.run_specification.codes.codes:
-                codes.append(x_asr_code(
-                    x_asr_package=entry.package, x_asr_version=entry.version,
-                    x_asr_git_hash=entry.git_hash))
+                code = codes.m_create(x_asr_code)
+                code.x_asr_package = entry.package
+                code.x_asr_version = entry.version
+                code.x_asr_git_hash = entry.git_hash
 
         if self.record.dependencies is not None:
             dependencies = run.m_create(x_asr_dependencies)
             for dep in self.record.dependencies.deps:
-                dependencies.x_asr_dependency.append(x_asr_dependency(
-                    uid=dep.uid, revision=dep.revision))
+                dependency = dependencies.m_create(x_asr_dependency)
+                dependency.x_asr_uid = dep.uid
+                dependency.x_asr_revision = dep.revision
 
     def to_archive(self):
         self._parse_run()
@@ -205,20 +210,23 @@ def asr_to_archives(directory: str, recipes: List[str] = None):
     nomad archive format.
     '''
     # record can only be fetched on the directory
-    cwd = os.getcwd()
-    os.chdir(directory)
-    cache = get_cache()
-    os.chdir(cwd)
+    try:
+        cwd = os.getcwd()
+        os.chdir(directory)
+        cache = get_cache()
 
-    records: List[Record] = []
-    if recipes is None:
-        records = cache.select()
-    else:
-        for recipe in recipes:
-            records.extend(cache.select(name=recipe))
-
-    asr_record = ASRRecord()
-    for record in records:
-        asr_record.record = record
-        with open('archive_%s.json' % record.uid, 'w') as f:
-            json.dump(asr_record.archive.m_to_dict(), f, indent=4)
+        records: List[Record] = []
+        if recipes is None:
+            records = cache.select()
+        else:
+            for recipe in recipes:
+                records.extend(cache.select(name=recipe))
+        asr_record = ASRRecord()
+        for record in records:
+            asr_record.record = record
+            with open('archive_%s.json' % record.uid, 'w') as f:
+                json.dump(asr_record.archive.m_to_dict(), f, indent=4)
+    except Exception:
+        pass
+    finally:
+        os.chdir(cwd)
