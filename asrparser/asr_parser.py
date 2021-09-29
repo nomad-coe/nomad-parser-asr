@@ -45,7 +45,7 @@ from asrparser.metainfo.asr import (
 
 
 class ASRRecord:
-    def __init__(self, record: Record = None):
+    def __init__(self, record=None):
         self._record = record
         self._converted = False
 
