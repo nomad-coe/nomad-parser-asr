@@ -22,9 +22,12 @@ import numpy as np
 from typing import List
 import datetime
 
-import asr
-from asr.core.cache import get_cache
-from asr.core.record import Record
+try:
+    import asr
+    from asr.core.cache import get_cache
+    from asr.core.record import Record
+except Exception:
+    pass
 
 from nomad.units import ureg
 from nomad.parsing.parser import ArchiveParser
