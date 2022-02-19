@@ -24,8 +24,8 @@ import datetime
 
 try:
     import asr
-    from asr.core.cache import get_cache
-    from asr.core.record import Record
+    from asr.core.cache import get_cache   # pylint: disable=E0611,E0401
+    from asr.core.record import Record   # pylint: disable=E0611,E0401
 except Exception:
     pass
 
@@ -207,7 +207,6 @@ class ASRParser(FairdiParser):
             mainfile_contents_re=(r'"name": "ASR"'))
 
     def parse(self, mainfile: str, archive: EntryArchive, logger=None):
-        import json
         with open(mainfile, 'rt') as f:
             archive_data = json.load(f)
             archive.m_update_from_dict(archive_data)
